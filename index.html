@@ -200,31 +200,18 @@
 
   // v13과 동일한 북한 외부 로더 (main 브랜치 + CDN 폴백)
   async function loadNK(){
-    const urls = [
-      "https://raw.githubusercontent.com/datasets/geo-countries/main/data/countries.geojson",
-      "https://cdn.jsdelivr.net/gh/datasets/geo-countries@main/data/countries.geojson"
-    ];
-    for (const url of urls){
-      try{
-        const res = await fetch(url, { cache: "no-store" });
-        if(!res.ok) throw new Error(res.status + " " + res.statusText);
-        const gj = await res.json();
-        const feat = gj.features.find(f =>
-          ((f.properties.ISO_A3 || f.properties.iso_a3 || '').toUpperCase() === 'PRK')
-        );
-        if(!feat) throw new Error("PRK feature not found");
-        const layer = L.geoJSON(feat, {
-          style: { ...baseStroke, fillColor:"#dddddd", fillOpacity: globalOpacity }
-        }).addTo(map);
-        const key = "NK";
-        layer.on("click", ()=>{ setActive(key); updateButtons(key); });
-        layerByKey.set(key, layer);
-        ensureRec(key, "북한");
-        return;
-      }catch(e){
-        console.error("북한 로드 실패 from", url, e);
-      }
-    }
+    try{
+      const res=await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson");
+      if(!res.ok) throw new Error('로드 실패');
+      const gj=await res.json();
+      const feat = gj.features.find(f=>((f.properties.ISO_A3||f.properties.iso_a3||'').toUpperCase()==='PRK') || String(f.properties.ADMIN||f.properties.name||'').toLowerCase().includes('north korea'));
+      if(!feat) return;
+      if(nkLayer) nkLayer.remove();
+      nkLayer=L.geoJSON(feat, { style: { ...baseStroke, fillColor:'#dddddd', fillOpacity: globalOpacity } }).addTo(map);
+      const nm='북한'; const key='NK'; ensureRec(key, nm); layerByKey.set(key, nkLayer);
+      nkLayer.on('click', ()=>{ setActive(key); updateButtons(key); });
+      recolor();
+    }catch(e){ /* ignore */ }
   }
 
   // 버튼 동작
