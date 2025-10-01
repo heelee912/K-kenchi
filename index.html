@@ -201,7 +201,7 @@
   // 예전 v16과 동일한 북한 외부 로더
   async function loadNK(){
     try{
-      const res = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson");
+      const res = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/main/data/countries.geojson");
       if(!res.ok) throw new Error('PRK load failed');
       const gj = await res.json();
       const feat = gj.features.find(f => ((f.properties.ISO_A3||f.properties.iso_a3||'').toUpperCase()==='PRK'));
