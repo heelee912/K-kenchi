@@ -52,6 +52,10 @@
     </div>
 
     <div class="sec stack">
+      <div>총점 <b id="sumScore">0</b> · 채운 지역 <b id="countFilled">0</b></div>
+    </div>
+
+    <div class="sec stack">
       <label>전체 불투명도: <span id="opacityVal">50%</span></label>
       <input id="opacitySlider" type="range" min="1" max="100" value="50" />
       <div class="muted">모든 구역에 동일하게 적용됩니다.</div>
@@ -174,6 +178,80 @@
     try { return layer.getBounds(); } catch(e){ return null; }
   }
 
+  // v13 방식 + 폴백 포함 북한 외부 로딩
+  async function loadNK(){
+    const baseStroke = { weight:0.7, color:"#777", opacity:0.9, lineJoin:"round" };
+    const applyLayer = (feat) => {
+      const layer = L.geoJSON(feat, {
+        style: { ...baseStroke, fillColor:"#dddddd", fillOpacity: globalOpacity }
+      }).addTo(map);
+      const key = "NK";
+      layerByKey.set(key, layer);
+      if(!dataMap.has(key)) dataMap.set(key, { level:0, notes:"", name:"북한" });
+      layer.on("click", ()=>{ setActive(key); updateButtons(key); });
+      recolor();
+    };
+
+    // 1) geoBoundaries PRK ADM0
+    try {
+      const metaRes = await fetch("https://www.geoboundaries.org/api/current/gbOpen/PRK/ADM0/", { cache:"no-store" });
+      if (!metaRes.ok) throw new Error("geoBoundaries meta " + metaRes.status);
+      const meta = await metaRes.json();
+      const url = (Array.isArray(meta) ? meta[0] : meta).gjDownloadURL;
+      if (!url) throw new Error("geoBoundaries gjDownloadURL missing");
+      const gjRes = await fetch(url, { cache:"no-store" });
+      if (!gjRes.ok) throw new Error("geoBoundaries gj " + gjRes.status);
+      const gj = await gjRes.json();
+      const feat = gj.features?.[0];
+      if (!feat) throw new Error("geoBoundaries: no features");
+      applyLayer(feat);
+      console.info("[K-kenchi] NK loaded from geoBoundaries:", url);
+      return;
+    } catch(e) {
+      console.warn("[K-kenchi] geoBoundaries failed:", e);
+    }
+
+    // 2) Natural Earth 50m
+    try {
+      const url = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson";
+      const res = await fetch(url, { cache:"no-store" });
+      if(!res.ok) throw new Error(res.status + " " + res.statusText);
+      const gj = await res.json();
+      const feat = (gj.features||[]).find(f => {
+        const p = f.properties||{};
+        const iso = (p.ISO_A3 || p.ADM0_A3 || p.SOV_A3 || "").toUpperCase();
+        const name= (p.NAME || p.NAME_LONG || p.FORMAL_EN || p.ADMIN || "").toUpperCase();
+        return iso==="PRK" || name.includes("KOREA, NORTH") || name.includes("NORTH KOREA");
+      });
+      if(!feat) throw new Error("Natural Earth 50m: PRK not found");
+      applyLayer(feat);
+      console.info("[K-kenchi] NK loaded from Natural Earth 50m:", url);
+      return;
+    } catch(e) {
+      console.warn("[K-kenchi] Natural Earth 50m failed:", e);
+    }
+
+    // 3) Natural Earth 110m
+    try {
+      const url = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
+      const res = await fetch(url, { cache:"no-store" });
+      if(!res.ok) throw new Error(res.status + " " + res.statusText);
+      const gj = await res.json();
+      const feat = (gj.features||[]).find(f => {
+        const p = f.properties||{};
+        const iso = (p.ISO_A3 || p.ADM0_A3 || p.SOV_A3 || "").toUpperCase();
+        const name= (p.NAME || p.NAME_LONG || p.FORMAL_EN || p.ADMIN || "").toUpperCase();
+        return iso==="PRK" || name.includes("KOREA, NORTH") || name.includes("NORTH KOREA");
+      });
+      if(!feat) throw new Error("Natural Earth 110m: PRK not found");
+      applyLayer(feat);
+      console.info("[K-kenchi] NK loaded from Natural Earth 110m:", url);
+      return;
+    } catch(e) {
+      console.error("[K-kenchi] NK load failed from all sources");
+    }
+  }
+
   async function loadAll(){
     const badge = $('loadState');
     badge.textContent = '불러오는 중';
@@ -186,27 +264,11 @@
         }
       }catch(e){ console.error('로드 실패:', url, e); }
     }
-    await loadNK();  // v13 방식: 북한 외부 로딩
+    await loadNK();  // 북한 외부 로딩
     if(overallBounds) map.fitBounds(overallBounds);
     else map.fitWorld();
     badge.textContent = '완료';
     recolor();
-  }
-
-  // v13과 동일한 북한 외부 로더 (main 브랜치 + CDN 폴백)
-  async function loadNK(){
-    try{
-      const res=await fetch("https://raw.githubusercontent.com/datasets/geo-countries/main/data/countries.geojson");
-      if(!res.ok) throw new Error('로드 실패');
-      const gj=await res.json();
-      const feat = gj.features.find(f=>((f.properties.ISO_A3||f.properties.iso_a3||'').toUpperCase()==='PRK') || String(f.properties.ADMIN||f.properties.name||'').toLowerCase().includes('north korea'));
-      if(!feat) return;
-      if(nkLayer) nkLayer.remove();
-      nkLayer=L.geoJSON(feat, { style: { ...baseStroke, fillColor:'#dddddd', fillOpacity: globalOpacity } }).addTo(map);
-      const nm='북한'; const key='NK'; ensureRec(key, nm); layerByKey.set(key, nkLayer);
-      nkLayer.on('click', ()=>{ setActive(key); updateButtons(key); });
-      recolor();
-    }catch(e){ /* ignore */ }
   }
 
   // 버튼 동작
@@ -274,9 +336,10 @@
     r.readAsText(f);
   });
 
-  (function init(){
+  // 즉시 실행
+  (async function init(){
     map.options.renderer = L.canvas();
-    loadAll();
+    await loadAll();
   })();
 </script>
 </body>
