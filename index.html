@@ -87,7 +87,7 @@
   const LEVELS = {5:'거주',4:'숙박',3:'방문',2:'접지',1:'통과',0:'미답'};
   const weights = {5:5, 4:4, 3:3, 2:2, 1:1, 0:0};
 
-  // 현재 데이터셋 기준 강원 prefix가 51인 경우가 있어 51로 둡니다. 필요 시 42로 교체 가능합니다.
+  /* 강원 prefix가 51인 데이터셋 기준. 42를 쓰신다면 여기와 파일명 둘 다 42로 바꾸십시오. */
   const SIDO_MAP = {
     '11':'서울특별시','26':'부산광역시','27':'대구광역시','28':'인천광역시','29':'광주광역시',
     '30':'대전광역시','31':'울산광역시','36':'세종특별자치시',
@@ -115,6 +115,7 @@
   function computeStats(){ let sum=0, filled=0; dataMap.forEach(v=>{ sum+=scoreOfLevel(v.level); if(v.level>0) filled++; }); $('sumScore').textContent=sum; $('countFilled').textContent=filled; }
   function colorFor(v){ if(v<=0) return '#f0f0f0'; const t=Math.max(0,Math.min(1,v/5)); const hue=210-210*t; const light=85-45*t; return `hsl(${hue},70%,${light}%)`; }
   function labelFor(code, sigName){ const sido = SIDO_MAP[(code||'').toString().slice(0,2)] || ''; return (sido? (sido+' '):'') + (sigName||''); }
+
   function setActive(key){
     if(selectedKey && layerByKey.has(selectedKey)){
       layerByKey.get(selectedKey).setStyle({ ...baseStroke, fillOpacity: globalOpacity });
@@ -126,6 +127,7 @@
       ly.bringToFront && ly.bringToFront();
     }
   }
+
   function recolor(){
     layerByKey.forEach((layer,key)=>{
       const rec=dataMap.get(key);
@@ -141,8 +143,17 @@
     });
     computeStats();
   }
-  function updateButtons(key){ const rec=dataMap.get(key)||{level:0,notes:'',name:''}; document.querySelectorAll('.lvbtn').forEach(b=>b.classList.toggle('active', +b.dataset.level===+rec.level)); $('noteBox').value=rec.notes||''; $('selName').textContent=rec.name||'없음'; }
-  function ensureRec(key, name){ if(!dataMap.has(key)) dataMap.set(key, {level:0,notes:'',name}); else { const o=dataMap.get(key); if(name && !o.name){ o.name=name; dataMap.set(key,o);} } }
+
+  function updateButtons(key){
+    const rec=dataMap.get(key)||{level:0,notes:'',name:''};
+    document.querySelectorAll('.lvbtn').forEach(b=>b.classList.toggle('active', +b.dataset.level===+rec.level));
+    $('noteBox').value=rec.notes||'';
+    $('selName').textContent=rec.name||'없음';
+  }
+  function ensureRec(key, name){
+    if(!dataMap.has(key)) dataMap.set(key, {level:0,notes:'',name});
+    else { const o=dataMap.get(key); if(name && !o.name){ o.name=name; dataMap.set(key,o);} }
+  }
 
   async function fetchJSON(url){
     const res = await fetch(url, { cache: 'no-store' });
@@ -156,21 +167,12 @@
     const layer = L.geoJSON(gj, {
       onEachFeature: (f, layer)=>{
         const p = f.properties || {};
-        // 기본 경로: 시군구
         const code = (p.SIG_CD||'').toString();
         const sig  = (p.SIG_KOR_NM||'').toString();
-        if(code && sig){
-          layerByKey.set(code, layer);
-          ensureRec(code, labelFor(code, sig));
-          layer.on('click', ()=>{ setActive(code); updateButtons(code); });
-        } else {
-          // 만약 북한 로컬 파일을 이 경로로 쓰게 될 때의 안전장치
-          const k = (p.code||'NK').toString();
-          const nm = (p.name||'북한').toString();
-          layerByKey.set(k, layer);
-          ensureRec(k, nm);
-          layer.on('click', ()=>{ setActive(k); updateButtons(k); });
-        }
+        if(!code || !sig) return;
+        layerByKey.set(code, layer);
+        ensureRec(code, labelFor(code, sig));
+        layer.on('click', ()=>{ setActive(code); updateButtons(code); });
       },
       style: { ...baseStroke, fillColor:'#f0f0f0', fillOpacity: globalOpacity }
     }).addTo(map);
@@ -189,30 +191,40 @@
         }
       }catch(e){ console.error('로드 실패:', url, e); }
     }
-    // 외부에서 북한 로딩
-    await loadNK();
-
+    await loadNK();  // v13 방식: 북한 외부 로딩
     if(overallBounds) map.fitBounds(overallBounds);
     else map.fitWorld();
     badge.textContent = '완료';
     recolor();
   }
 
-  // 예전 v16과 동일한 북한 외부 로더
+  // v13과 동일한 북한 외부 로더 (main 브랜치 + CDN 폴백)
   async function loadNK(){
-    try{
-      const res = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/main/data/countries.geojson");
-      if(!res.ok) throw new Error('PRK load failed');
-      const gj = await res.json();
-      const feat = gj.features.find(f => ((f.properties.ISO_A3||f.properties.iso_a3||'').toUpperCase()==='PRK'));
-      if(!feat) return;
-      const layer = L.geoJSON(feat, {
-        style: { ...baseStroke, fillColor:'#dddddd', fillOpacity: globalOpacity }
-      }).addTo(map);
-      const key='NK'; layerByKey.set(key, layer);
-      ensureRec(key, '북한');
-      layer.on('click', ()=>{ setActive(key); updateButtons(key); });
-    }catch(e){ console.error('북한 로드 실패', e); }
+    const urls = [
+      "https://raw.githubusercontent.com/datasets/geo-countries/main/data/countries.geojson",
+      "https://cdn.jsdelivr.net/gh/datasets/geo-countries@main/data/countries.geojson"
+    ];
+    for (const url of urls){
+      try{
+        const res = await fetch(url, { cache: "no-store" });
+        if(!res.ok) throw new Error(res.status + " " + res.statusText);
+        const gj = await res.json();
+        const feat = gj.features.find(f =>
+          ((f.properties.ISO_A3 || f.properties.iso_a3 || '').toUpperCase() === 'PRK')
+        );
+        if(!feat) throw new Error("PRK feature not found");
+        const layer = L.geoJSON(feat, {
+          style: { ...baseStroke, fillColor:"#dddddd", fillOpacity: globalOpacity }
+        }).addTo(map);
+        const key = "NK";
+        layer.on("click", ()=>{ setActive(key); updateButtons(key); });
+        layerByKey.set(key, layer);
+        ensureRec(key, "북한");
+        return;
+      }catch(e){
+        console.error("북한 로드 실패 from", url, e);
+      }
+    }
   }
 
   // 버튼 동작
