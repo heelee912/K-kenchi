@@ -27,6 +27,17 @@
     #side { border-right: none; border-bottom: 1px solid #eee; }
   }
 </style>
+
+  <style>
+    #rail-legend .chip{display:inline-flex;align-items:center;gap:6px;margin-right:10px;padding:2px 6px;background:#f3f3f3;border-radius:6px}
+    #rail-legend .sw{width:18px;height:4px;border-radius:2px;display:inline-block}
+    #rail-legend .subway .sw{background:#2f6fff}
+    #rail-legend .lrail  .sw{background:#15a05a}
+    #rail-legend .mono   .sw{background:#7a3cff}
+    #rail-legend .tram   .sw{background:#ff7b00}
+    #rail-legend .rail   .sw{background:#555}
+  </style>
+
 </head>
 <body>
 <div id="layout">
@@ -59,6 +70,24 @@
       <label>전체 불투명도: <span id="opacityVal">50%</span></label>
       <input id="opacitySlider" type="range" min="1" max="100" value="50" />
       <div class="muted">모든 구역에 동일하게 적용됩니다.</div>
+    <!-- 노선도 패널 (사이드바) -->
+    <div class="sec stack" id="urbanrailSidebarPanel" style="margin-top:8px">
+      <label style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+        <span>노선도 표시</span>
+        <input type="checkbox" id="rail-toggle" checked>
+      </label>
+      <details id="rail-legend-wrap" style="margin-top:6px">
+        <summary style="cursor:pointer;user-select:none">범례</summary>
+        <div id="rail-legend" style="margin-top:6px;font-size:12px">
+          <span class="chip subway"><span class="sw"></span>지하철</span>
+          <span class="chip lrail"><span class="sw"></span>경전철</span>
+          <span class="chip mono"><span class="sw"></span>모노레일</span>
+          <span class="chip tram"><span class="sw"></span>트램</span>
+          <span class="chip rail"><span class="sw"></span>일반철도</span>
+        </div>
+      </details>
+    </div>
+
     </div>
 
     <div class="sec">
@@ -99,6 +128,8 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   let map = L.map('map', { preferCanvas:true }).setView([36.4, 127.8], 7);
+window.map = map; // expose Leaflet map for rail overlay
+
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'&copy; OpenStreetMap' }).addTo(map);
 
   let selectedKey = null;
@@ -342,5 +373,78 @@
     await loadAll();
   })();
 </script>
+
+<script>
+(function(){
+  const URL_ = 'data/urbanrail.gson';
+  const toggle = document.getElementById('rail-toggle');
+  const legend = document.getElementById('rail-legend');
+  let railLayer = null, cache = null;
+
+  function isLeafletMap(m){
+    return !!(m && typeof m.addLayer==='function' && typeof m.removeLayer==='function' && typeof m.hasLayer==='function');
+  }
+  function getMap(){ return window.map && isLeafletMap(window.map) ? window.map : null; }
+  function factory(){ return (L && (L.geoJSON||L.geoJson)) ? (L.geoJSON||L.geoJson) : null; }
+  function modeOf(p){
+    const r=(p&&p.railway||'').toLowerCase(), t=(p&&p.route||'').toLowerCase();
+    const has=k=>r.includes(k)||t.includes(k);
+    if (has('subway')) return 'subway';
+    if (has('light_rail')) return 'light_rail';
+    if (has('monorail')) return 'monorail';
+    if (has('tram')) return 'tram';
+    return 'rail';
+  }
+  function style(f){
+    const m = modeOf(f.properties||{});
+    if (m==='subway')     return {color:'#2f6fff', weight:2.0, opacity:1, interactive:false};
+    if (m==='light_rail') return {color:'#15a05a', weight:2.4, opacity:1, interactive:false};
+    if (m==='monorail')   return {color:'#7a3cff', weight:2.2, opacity:1, interactive:false};
+    if (m==='tram')       return {color:'#ff7b00', weight:2.4, opacity:1, interactive:false};
+    return {color:'#555555', weight:3.0, opacity:0.95, interactive:false};
+  }
+  async function data(){
+    if (cache) return cache;
+    const r = await fetch(URL_, {cache:'no-store'});
+    cache = await r.json();
+    return cache;
+  }
+  function nonInteractive(layer){
+    try{
+      layer.eachLayer && layer.eachLayer(function(l){
+        if (l.off) l.off();
+        const el = l.getElement && l.getElement();
+        if (el && el.style) el.style.pointerEvents = 'none';
+      });
+    }catch(_){}
+  }
+  async function turnOn(){
+    const m = getMap(); if (!m) return;
+    const f = factory(); if (!f) return;
+    const gj = await data();
+    if (railLayer && m.hasLayer(railLayer)) { try{ m.removeLayer(railLayer); }catch(_){ } }
+    railLayer = f(gj, { style, interactive:false });
+    m.addLayer(railLayer);
+    if (railLayer.bringToBack) try{ railLayer.bringToBack(); }catch(_){ }
+    nonInteractive(railLayer);
+    if (legend) legend.parentElement.open = true, legend.style.display = 'block';
+  }
+  function turnOff(){
+    const m = getMap(); if (!m) return;
+    if (railLayer && m.hasLayer(railLayer)) { try{ m.removeLayer(railLayer); }catch(_){ } }
+    railLayer = null;
+    if (legend) legend.style.display = 'none';
+  }
+  if (toggle){
+    toggle.addEventListener('change', e => e.target.checked ? turnOn() : turnOff());
+  }
+  // Auto-on after map exists
+  let tries=0; const tm=setInterval(function(){
+    if (getMap()){ clearInterval(tm); if (!toggle || toggle.checked) turnOn(); }
+    else if (++tries>100){ clearInterval(tm); }
+  }, 100);
+})();
+</script>
+
 </body>
 </html>
